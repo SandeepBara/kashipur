@@ -83,6 +83,8 @@ Route::middleware(['auth:sanctum',"expireBearerToken","setUlb"])->group(function
             Route::post('rfid-map-not-map', 'consumerRFIDmaped');
             Route::post('vehicle-movement', 'getVehicleTodayLog');
             Route::post("consumer-location","getConsumerLocation");
+            Route::post("map-feature-name", "lookupMapFeatureName");
+            Route::post("cctv-cameras", "getCctvCameras");
             Route::post("consumer-wast-collection","consumerWestCollection");
             Route::post("today-wast-collection","todayWestCollectNotCollectConsumer");
             Route::post("ward-wise-wast-collection","wardWiseWestCollection");

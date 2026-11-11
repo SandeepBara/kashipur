@@ -53,5 +53,9 @@ return [
         'redirect' => env('FACEBOOK_REDIRECT_URI'),
     ],
 
+    'nominatim' => [
+        'user_agent' => env('NOMINATIM_USER_AGENT', 'KashiPurSWM/1.0'),
+    ],
+
 
 ];

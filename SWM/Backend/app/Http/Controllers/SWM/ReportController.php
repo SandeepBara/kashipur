@@ -21,8 +21,10 @@ use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Validator;
 
 class ReportController extends Controller
@@ -1157,11 +1159,32 @@ class ReportController extends Controller
         try{
             $date = Carbon::parse($request->date)->format("Y-m-d");
             $log = $this->_ConsumerWastCollectionLog
-                    ->select("id","visiting_date","visiting_time","consumer_id")
-                    ->where("lock_status",false)
-                    ->where("visiting_date",$date)
-                    ->orderBy("consumer_id","ASC")
+                    ->select(
+                        "id", "visiting_date", "visiting_time", "consumer_id", "user_id", "latitude", "longitude"
+                    )
+                    ->where("consumer_wast_collection_logs.lock_status",false)
+                    ->where("consumer_wast_collection_logs.visiting_date",$date)
+                    ->orderBy("user_id","ASC")
+                    ->orderBy("visiting_time","ASC")
                     ->get();
+            $consumerIds = $log->pluck("consumer_id")->unique()->filter()->values();
+            $userIds = $log->pluck("user_id")->unique()->filter()->values();
+            $consumerDetails = $this->_Consumer->whereIn("id", $consumerIds)->get(["id", "consumer_no", "holding_no", "house_no", "street_name", "locality", "address", "latitude", "longitude"])->keyBy("id");
+            $userDetails = $this->_User->whereIn("id", $userIds)->get(["id", "name"])->keyBy("id");
+            $log = $log->map(function ($visit) use ($consumerDetails, $userDetails) {
+                $consumer = $consumerDetails->get($visit->consumer_id);
+                $user = $userDetails->get($visit->user_id);
+                $visit->consumer_no = $consumer?->consumer_no;
+                $visit->holding_no = $consumer?->holding_no;
+                $visit->house_no = $consumer?->house_no;
+                $visit->street_name = $consumer?->street_name;
+                $visit->locality = $consumer?->locality;
+                $visit->address = $consumer?->address;
+                $visit->consumer_latitude = $consumer?->latitude;
+                $visit->consumer_longitude = $consumer?->longitude;
+                $visit->user_name = $user?->name;
+                return $visit;
+            });
             return responseMsg(true,"Consumer Visited Log",$log);
         }catch (CustomException $e) {
             return responseMsg(false, $e->getMessage(), '');
@@ -1175,6 +1198,7 @@ class ReportController extends Controller
             $date = Carbon::parse($request->date)->format("Y-m-d");
             $log = $this->_Consumer
                     ->select("consumers.id","consumers.consumer_no","consumers.rf_id","consumers.holding_no",
+                        "consumers.house_no","consumers.street_name","consumers.locality","consumers.address",
                         "consumers.latitude",
                         "consumers.longitude")
                     ->where("consumers.lock_status",false)
@@ -1186,6 +1210,89 @@ class ReportController extends Controller
         } catch (Exception $e) {
             return responseMsg(false, 'Internal Server Error!!', '');
         }
+    }
+
+    public function lookupMapFeatureName(Request $request){
+        $validator = Validator::make($request->all(), [
+            "latitude" => "required|numeric|between:-90,90",
+            "longitude" => "required|numeric|between:-180,180",
+        ]);
+        if ($validator->fails()) {
+            return response()->json(["status" => false, "message" => "Valid coordinates are required", "data" => null], 422);
+        }
+
+        $latitude = round((float) $request->latitude, 5);
+        $longitude = round((float) $request->longitude, 5);
+        $cacheKey = "map-feature-name:" . sha1($latitude . "," . $longitude);
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return response()->json(["status" => true, "message" => "Map feature name", "data" => $cached]);
+        }
+
+        // The public Nominatim service limits the whole application to at most one request per second.
+        if (!Cache::add("nominatim-global-request-slot", true, now()->addSeconds(2))) {
+            return response()->json(["status" => false, "message" => "Map name lookup is busy. Try again in a moment.", "data" => null], 429);
+        }
+
+        try {
+            $response = Http::timeout(8)
+                ->withHeaders([
+                    "User-Agent" => config("services.nominatim.user_agent"),
+                    "Accept-Language" => "en",
+                ])
+                ->get("https://nominatim.openstreetmap.org/reverse", [
+                    "format" => "jsonv2",
+                    "lat" => $latitude,
+                    "lon" => $longitude,
+                    "zoom" => 18,
+                    "addressdetails" => 1,
+                    "namedetails" => 1,
+                ]);
+
+            if (!$response->successful()) {
+                return response()->json(["status" => false, "message" => "Map name lookup is temporarily unavailable", "data" => null], 502);
+            }
+
+            $result = $response->json() ?? [];
+            $address = $result["address"] ?? [];
+            $name = $result["name"]
+                ?? ($result["namedetails"]["name"] ?? null)
+                ?? ($address["building"] ?? null)
+                ?? ($address["amenity"] ?? null)
+                ?? ($address["shop"] ?? null)
+                ?? ($address["office"] ?? null)
+                ?? ($address["tourism"] ?? null)
+                ?? ($address["house_number"] ?? null);
+            $data = ["name" => $name, "label" => $result["display_name"] ?? $name];
+            Cache::put($cacheKey, $data, now()->addDays(30));
+            return response()->json(["status" => true, "message" => "Map feature name", "data" => $data]);
+        } catch (Exception $e) {
+            return response()->json(["status" => false, "message" => "Map name lookup is temporarily unavailable", "data" => null], 502);
+        }
+    }
+
+    public function getCctvCameras(){
+        $cameras = collect(Config::get("cctv.cameras", []))
+            ->filter(function ($camera) {
+                if (!is_array($camera) || empty($camera["id"]) || empty($camera["name"])) return false;
+                $type = strtolower($camera["type"] ?? "viewer");
+                if (!in_array($type, ["viewer", "hls", "video", "mjpeg", "rtsp"], true)) return false;
+                if ($type === "rtsp") return true;
+                $url = $camera["stream_url"] ?? $camera["view_url"] ?? null;
+                if (!is_string($url)) return false;
+                $scheme = $url ? parse_url($url, PHP_URL_SCHEME) : null;
+                return $url && filter_var($url, FILTER_VALIDATE_URL) && in_array($scheme, ["http", "https"], true);
+            })
+            ->map(function ($camera) {
+                $type = strtolower($camera["type"] ?? "viewer");
+                $data = ["id" => (string) $camera["id"], "name" => (string) $camera["name"], "type" => $type];
+                // Keep raw RTSP addresses and credentials on the backend; browsers cannot play RTSP directly.
+                if ($type !== "rtsp") $data["stream_url"] = (string) ($camera["stream_url"] ?? $camera["view_url"]);
+                return $data;
+            })
+            ->values();
+
+        return responseMsg(true, "CCTV camera list", camelCase($cameras));
     }
 
     public function todayWestCollectNotCollectConsumer(Request $request){

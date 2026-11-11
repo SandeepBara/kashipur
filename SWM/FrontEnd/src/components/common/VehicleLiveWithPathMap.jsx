@@ -1,237 +1,405 @@
 import axios from "axios";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Echo from "laravel-echo";
 import Pusher from "pusher-js";
-import { swmConsumerLocationListApi, swmWastCollationApi, vehicleMovementLogApi } from "../../api/endpoints";
+import { mapFeatureNameApi, swmConsumerLocationListApi, swmWastCollationApi, vehicleMovementLogApi } from "../../api/endpoints";
 import { getToken } from "../../utils/auth";
+import CctvMonitor from "./CctvMonitor";
 
 window.Pusher = Pusher;
+const mapTileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const mapAttribution = import.meta.env.VITE_MAP_ATTRIBUTION || 'Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community · &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
+const streetLabelsUrl = import.meta.env.VITE_MAP_STREET_LABELS_URL || "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}";
+const placeLabelsUrl = import.meta.env.VITE_MAP_PLACE_LABELS_URL || "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+
+const coordinates = (latitude, longitude) => {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+    ? [lat, lng]
+    : null;
+};
+
+const consumerBuildingName = (consumer) => {
+  const holding = consumer?.holdingNo ?? consumer?.holding_no;
+  const house = consumer?.houseNo ?? consumer?.house_no;
+  const street = consumer?.streetName ?? consumer?.street_name;
+  const locality = consumer?.locality;
+  const address = consumer?.address;
+  const identity = [holding && `Holding ${holding}`, house && `House ${house}`].filter(Boolean).join(" · ");
+  const area = [street, locality, address].filter(Boolean).join(", ");
+  return [identity || (consumer?.consumerNo ?? consumer?.consumer_no ?? `Consumer ${consumer?.id}`), area].filter(Boolean).join(" — ");
+};
 
 function VehicleTracker() {
   const token = getToken();
-
-  const mapRef = useRef(null);
-  const markers = useRef({});
-  const paths = useRef({});
-  const iconCache = useRef({});
-  const householdMarkers = useRef({});
-  const echoRef = useRef(null); // Ref to store Echo instance
-
+  const mapElement = useRef(null);
+  const map = useRef(null);
+  const vehicleMarkers = useRef({});
+  const vehiclePaths = useRef({});
+  const tcMarkers = useRef({});
+  const tcPaths = useRef({});
+  const consumerMarkers = useRef({});
+  const locationPin = useRef(null);
+  const destinationRoute = useRef(null);
+  const mapNameLookups = useRef({});
+  const echo = useRef(null);
+  const vehicles = useRef([]);
+  const visits = useRef([]);
+  const consumers = useRef([]);
+  const [tcList, setTcList] = useState([]);
   const [consumerList, setConsumerList] = useState([]);
-  const [visitedConsumerList, setVisitedConsumerList] = useState([]);
+  const [selectedTc, setSelectedTc] = useState("");
+  const [consumerSelectionMode, setConsumerSelectionMode] = useState("single");
+  const [selectedConsumerIds, setSelectedConsumerIds] = useState([]);
+  const [consumerQuery, setConsumerQuery] = useState("");
+  const [areaQuery, setAreaQuery] = useState("");
+  const [areaMessage, setAreaMessage] = useState("");
+  const routingUrl = import.meta.env.VITE_ROUTING_URL || "https://router.project-osrm.org/route/v1/driving";
+
+
+  const lookupMapFeatureName = useCallback((point) => {
+    const key = point.map((value) => value.toFixed(5)).join(",");
+    const showOnCurrentPin = (message) => {
+      const pinPoint = locationPin.current?.getLatLng();
+      const pinKey = pinPoint ? [pinPoint.lat, pinPoint.lng].map((value) => value.toFixed(5)).join(",") : "";
+      if (pinKey === key) locationPin.current.setPopupContent(message).openPopup();
+    };
+    const cached = mapNameLookups.current[key];
+    if (cached) {
+      if (cached !== "pending") {
+        showOnCurrentPin(cached);
+      } else {
+        showOnCurrentPin("Map name lookup in progress…");
+      }
+      return;
+    }
+    mapNameLookups.current[key] = "pending";
+    axios.post(mapFeatureNameApi, { latitude: point[0], longitude: point[1] }, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((response) => {
+      const name = response?.data?.data?.name;
+      const label = response?.data?.data?.label;
+      if (response?.data?.status) {
+        const displayName = name || (label ? `No building name mapped · ${label}` : "No building name mapped here");
+        mapNameLookups.current[key] = displayName;
+        showOnCurrentPin(displayName);
+      } else {
+        delete mapNameLookups.current[key];
+        showOnCurrentPin("No map name found here");
+      }
+    }).catch((error) => {
+      delete mapNameLookups.current[key];
+      const message = error.response?.status === 429 ? "Map lookup busy; double-click again shortly" : "Map name lookup unavailable";
+      showOnCurrentPin(message);
+    });
+  }, [token]);
+
+  const drawVehicles = useCallback((items) => {
+    if (!map.current || !Array.isArray(items)) return;
+    items.forEach((vehicle) => {
+      const point = coordinates(vehicle.latitude, vehicle.longitude);
+      if (!point) return;
+      const id = vehicle.id;
+      if (!vehicleMarkers.current[id]) {
+        vehicleMarkers.current[id] = L.marker(point).addTo(map.current)
+          .bindTooltip(vehicle.vehicleNo || `Vehicle ${id}`, { direction: "top" });
+      } else {
+        vehicleMarkers.current[id].setLatLng(point);
+      }
+      const points = (vehicle.path || []).map((entry) => coordinates(entry.latitude, entry.longitude)).filter(Boolean);
+      if (points.length) {
+        if (!vehiclePaths.current[id]) vehiclePaths.current[id] = L.polyline(points, { color: "#0891b2", weight: 4 }).addTo(map.current);
+        else vehiclePaths.current[id].setLatLngs(points);
+      }
+    });
+  }, []);
+
+  const drawVisits = useCallback((rows) => {
+    if (!map.current || !Array.isArray(rows)) return;
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const point = coordinates(row.latitude, row.longitude) || coordinates(row.consumerLatitude ?? row.consumer_latitude, row.consumerLongitude ?? row.consumer_longitude);
+      if (!point) return;
+      const userId = row.userId ?? row.user_id;
+      const id = String(userId ?? "unknown");
+      const userName = row.userName ?? row.user_name;
+      if (!grouped.has(id)) grouped.set(id, { id, name: userName || `TC ${id}`, points: [], latest: null });
+      const tc = grouped.get(id);
+      tc.points.push(point);
+      tc.latest = { point, consumerNo: row.consumerNo ?? row.consumer_no, consumerId: row.consumerId ?? row.consumer_id, time: row.visitingTime ?? row.visiting_time };
+
+      const consumerId = String(row.consumerId ?? row.consumer_id);
+      const buildingName = consumerBuildingName(row);
+      if (!consumerMarkers.current[consumerId]) {
+        consumerMarkers.current[consumerId] = L.circleMarker(point, {
+          radius: 7, fillColor: "#ef4444", color: "#fff", weight: 2, fillOpacity: 0.9,
+        }).addTo(map.current).bindPopup(buildingName);
+      }
+    });
+
+    const list = [...grouped.values()];
+    setTcList(list);
+    list.forEach((tc) => {
+      if (selectedTc && String(selectedTc) !== tc.id) return;
+      if (!tc.latest) return;
+      const label = `${tc.name}${tc.latest.time ? ` · ${tc.latest.time}` : ""}`;
+      if (!tcMarkers.current[tc.id]) tcMarkers.current[tc.id] = L.marker(tc.latest.point).addTo(map.current).bindTooltip(label);
+      else tcMarkers.current[tc.id].setLatLng(tc.latest.point).setTooltipContent(label);
+      if (tcPaths.current[tc.id]) map.current.removeLayer(tcPaths.current[tc.id]);
+      tcPaths.current[tc.id] = L.polyline(tc.points, { color: "#7c3aed", weight: 4, dashArray: "7 6" }).addTo(map.current);
+    });
+    return list;
+  }, [selectedTc, lookupMapFeatureName]);
 
   useEffect(() => {
-    const setupTracker = async () => {
-      try {
-        // 1. Initialize Leaflet Map
-        if (!mapRef.current) {
-          console.log("📍 Initializing Map...");
-          mapRef.current = L.map("vehicle-map", {
-            center: [20.5937, 78.9629],
-            zoom: 15,
-          });
+    if (!mapElement.current || map.current || !window.L) return undefined;
+    map.current = L.map(mapElement.current, { maxZoom: 18 }).setView([20.5937, 78.9629], 5);
+    map.current.createPane("labelPane");
+    map.current.getPane("labelPane").style.zIndex = 350;
+    L.tileLayer(mapTileUrl, {
+      attribution: mapAttribution,
+      maxZoom: 18,
+    }).addTo(map.current);
+    L.tileLayer(streetLabelsUrl, {
+      attribution: "Street labels &copy; Esri",
+      maxZoom: 18,
+      zIndex: 500,
+      pane: "labelPane",
+    }).addTo(map.current);
+    L.tileLayer(placeLabelsUrl, {
+      attribution: "Place labels &copy; Esri",
+      maxZoom: 18,
+      zIndex: 501,
+      pane: "labelPane",
+    }).addTo(map.current);
 
-          L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-            attribution: "© Esri",
-            maxZoom: 20
-          }).addTo(mapRef.current);
-        }
+    const handleMapDoubleClick = (event) => {
+      const point = [event.latlng.lat, event.latlng.lng];
+      if (locationPin.current) map.current.removeLayer(locationPin.current);
+      locationPin.current = L.marker(point).addTo(map.current);
+      locationPin.current.bindPopup("Looking up map name…").openPopup();
+      lookupMapFeatureName(point);
+    };
+    map.current.doubleClickZoom.disable();
+    map.current.on("dblclick", handleMapDoubleClick);
 
-        // 2. Initialize Laravel Echo (Reverb)
-        if (!echoRef.current) {
-          console.log("📡 Connecting to Reverb...");
-          
-          echoRef.current = new Echo({
-            broadcaster: 'reverb',
-            key: import.meta.env.VITE_REVERB_APP_KEY,
-            wsHost: import.meta.env.VITE_REVERB_HOST,
-            wsPort: import.meta.env.VITE_REVERB_PORT,
-            wssPort: import.meta.env.VITE_REVERB_PORT,
-            forceTLS: import.meta.env.VITE_REVERB_SCHEME === 'https',
-            enabledTransports: ['ws',"wss"],
-            disableStats: true,
-            heartbeatInterval: 30000,
-          });
+    return () => {
+      map.current?.off("dblclick", handleMapDoubleClick);
+      if (echo.current) echo.current.disconnect();
+      echo.current = null;
+      map.current?.remove();
+      map.current = null;
+    };
+  }, [lookupMapFeatureName]);
 
-          // Connection Event Bindings
-          const connection = echoRef.current.connector.pusher.connection;
-
-          connection.bind('connected', () => console.log('✅ WebSocket Connected!'));
-          connection.bind('error', (err) => console.error('❌ WebSocket Error:', err));
-          connection.bind('disconnected', () => console.warn('⚠️ WebSocket Disconnected'));
-
-          // Listen for Real-time Updates
-          echoRef.current.channel("fleet-monitoring")
-            .listen(".location.updated", (e) => {
-              let data = e?.data??e;
-              console.log("🛰️ Data Received:", data);
-              if (e) {
-                // Note: Pass e directly if your event sends the formatted object
-                updateVehicles([data], "websocket"); 
-              }
-            });
-        }
-
-        // 3. Perform Initial Data Load
-        await loadVehicles();
-
-      } catch (err) {
-        console.error("🚨 Initialization Failed:", err.message);
+  useEffect(() => {
+    if (!map.current || !token) return undefined;
+    let active = true;
+    const headers = { Authorization: `Bearer ${token}` };
+    const loadVehicles = async () => {
+      const response = await axios.post(vehicleMovementLogApi, {}, { headers });
+      if (active && response?.data?.status) {
+        vehicles.current = response.data.data || [];
+        drawVehicles(vehicles.current);
       }
     };
-
-    const loadVehicles = async () => {
+    const loadMapData = async () => {
       try {
-        const response = await axios.post(vehicleMovementLogApi, {}, {
-          headers: { Authorization: `Bearer ${token}` },
+        const [visitResponse, consumerResponse] = await Promise.all([
+          axios.post(swmWastCollationApi, {}, { headers }),
+          axios.post(swmConsumerLocationListApi, {}, { headers }),
+        ]);
+        if (!active) return;
+        visits.current = visitResponse?.data?.data || [];
+        consumers.current = consumerResponse?.data?.data || [];
+        setConsumerList(consumers.current);
+        drawVisits(visits.current);
+        consumers.current.forEach((consumer) => {
+          const point = coordinates(consumer.latitude, consumer.longitude);
+          if (!point || consumerMarkers.current[String(consumer.id)]) return;
+          consumerMarkers.current[String(consumer.id)] = L.circleMarker(point, {
+            radius: 6, fillColor: "#f97316", color: "#fff", weight: 2, fillOpacity: 0.75,
+          }).addTo(map.current).bindPopup(consumerBuildingName(consumer));
         });
-        if (response?.data?.status) {
-          updateVehicles(response.data.data, "api");
+        const points = consumers.current.map((consumer) => coordinates(consumer.latitude, consumer.longitude)).filter(Boolean);
+
+        if (points.length > 0) {
+          const bounds = L.latLngBounds(points);
+          map.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
         }
       } catch (error) {
-        console.error("❌ Failed to load initial vehicle data:", error);
+        console.error("Could not load TC and consumer locations", error);
       }
     };
 
-    // Run the setup
-    if (token) {
-      setupTracker();
+    Promise.all([loadVehicles().catch((error) => console.error("Could not load vehicles", error)), loadMapData()]);
+    if (!echo.current) {
+      echo.current = new Echo({
+        broadcaster: "reverb",
+        key: import.meta.env.VITE_REVERB_APP_KEY,
+        wsHost: import.meta.env.VITE_REVERB_HOST,
+        wsPort: import.meta.env.VITE_REVERB_PORT,
+        wssPort: import.meta.env.VITE_REVERB_PORT,
+        forceTLS: import.meta.env.VITE_REVERB_SCHEME === "https",
+        enabledTransports: ["ws", "wss"],
+        disableStats: true,
+      });
+      echo.current.channel("fleet-monitoring").listen(".location.updated", (event) => {
+        const incoming = event?.data ?? event;
+        const current = vehicles.current.filter((item) => String(item.id) !== String(incoming?.id));
+        vehicles.current = [...current, incoming];
+        drawVehicles([incoming]);
+      });
     }
-
-    // Cleanup on Unmount
+    const refreshVisits = window.setInterval(loadMapData, 60000);
     return () => {
-      if (echoRef.current) {
-        console.log("🔌 Disconnecting Echo...");
-        echoRef.current.disconnect();
-        echoRef.current = null; // Reset the ref
-      }
+      active = false;
+      window.clearInterval(refreshVisits);
     };
-  }, [token]);
+  }, [token, drawVehicles, drawVisits, lookupMapFeatureName]);
 
-  // 2️⃣ Fetch All Consumer Locations (Red Markers)
   useEffect(() => {
-    const fetchConsumers = async () => {
-      try {
-        const response = await axios.post(swmConsumerLocationListApi, {}, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (response?.data?.status) {
-          setConsumerList(response.data.data);
-          sparedConsumer(response.data.data);
-        }
-      } catch (error) { console.error(error); }
-    };
-    if (token) fetchConsumers();
-  }, [token]);
+    if (!map.current) return;
+    Object.values(tcPaths.current).forEach((path) => map.current.removeLayer(path));
+    Object.values(tcMarkers.current).forEach((marker) => map.current.removeLayer(marker));
+    tcPaths.current = {};
+    tcMarkers.current = {};
+    drawVisits(visits.current);
+  }, [selectedTc, drawVisits]);
 
-  // 3️⃣ Fetch Visited Consumers (Keep polling for these if not yet web-socketed)
+  const selectedTcData = useMemo(() => tcList.find((tc) => tc.id === String(selectedTc)), [tcList, selectedTc]);
+  const selectedConsumer = selectedConsumerIds[0] || "";
+  const selectedConsumerData = useMemo(() => consumerList.find((consumer) => String(consumer.id) === String(selectedConsumer)), [consumerList, selectedConsumer]);
+  const filteredConsumerList = useMemo(() => {
+    const query = consumerQuery.trim().toLowerCase();
+    if (!query) return consumerList;
+    return consumerList.filter((consumer) => [
+      consumer.consumerNo, consumer.consumer_no, consumer.holdingNo, consumer.holding_no,
+      consumer.houseNo, consumer.house_no, consumer.streetName, consumer.street_name,
+      consumer.locality, consumer.address,
+    ].some((value) => String(value || "").toLowerCase().includes(query)));
+  }, [consumerList, consumerQuery]);
+  const destination = useMemo(() => coordinates(selectedConsumerData?.latitude, selectedConsumerData?.longitude), [selectedConsumerData]);
+  const origin = useMemo(() => selectedTcData?.latest?.point, [selectedTcData]);
+  const directionsUrl = destination && origin
+    ? `https://www.google.com/maps/dir/?api=1&origin=${origin[0]},${origin[1]}&destination=${destination[0]},${destination[1]}&travelmode=driving`
+    : null;
+
   useEffect(() => {
-    const fetchVisited = async () => {
-      try {
-        const response = await axios.post(swmWastCollationApi, {}, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (response?.data?.status) setVisitedConsumerList(response.data.data);
-      } catch (error) { console.error(error); }
-    };
-    if (token) {
-      fetchVisited();
-      const interval = setInterval(fetchVisited, 60000); // Increased interval to save battery
-      return () => clearInterval(interval);
+    if (destinationRoute.current && map.current) {
+      map.current.removeLayer(destinationRoute.current);
+      destinationRoute.current = null;
     }
-  }, [token]);
+    if (!origin || !destination || !map.current) return undefined;
+    let active = true;
+    const routeRequest = `${routingUrl}/${origin[1]},${origin[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
+    fetch(routeRequest)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Routing service returned ${response.status}`);
+        return response.json();
+      })
+      .then((result) => {
+        const coordinatesList = result.routes?.[0]?.geometry?.coordinates;
+        if (!active || !coordinatesList?.length) return;
+        const points = coordinatesList.map(([longitude, latitude]) => [latitude, longitude]);
+        destinationRoute.current = L.polyline(points, { color: "#f59e0b", weight: 5 }).addTo(map.current);
+        map.current.fitBounds(destinationRoute.current.getBounds(), { padding: [40, 40] });
+      })
+      .catch((error) => console.warn("Road route could not be loaded", error));
+    return () => { active = false; };
+  }, [origin, destination, routingUrl]);
 
-  // 4️⃣ Sync Colors when Visited Data arrives
   useEffect(() => {
-    if (visitedConsumerList.length > 0 && Object.keys(householdMarkers.current).length > 0) {
-      updateVisitingColor(visitedConsumerList);
-    }
-  }, [visitedConsumerList]);
+    if (!map.current || !selectedConsumer) return;
+    const consumer = consumerList.find((item) => String(item.id) === String(selectedConsumer));
+    const point = coordinates(consumer?.latitude, consumer?.longitude);
+    if (point) consumerMarkers.current[String(selectedConsumer)]?.openPopup();
+  }, [selectedConsumer, consumerList]);
 
-  // --- Logic: Update Moving Vehicles ---
-  const updateVehicles = (list,from=null) => {
-    console.log("list",list);
-    list.forEach((v) => {
-      const id = v?.id; // Support both API and WebSocket keys
-      if (!v.latitude || !v.longitude) return;
-
-      const type = v.type || "default"; // Fallback icon
-      if (!iconCache.current[type]) {
-        iconCache.current[type] = new L.Icon({
-          iconUrl: `/icons/${type}.png`,
-          iconSize: [30, 30],
-          iconAnchor: [21, 21],
-        });
-      }
-
-      const icon = iconCache.current[type];
-      const newLatLng = [parseFloat(v.latitude), parseFloat(v.longitude)];
-
-      if (!markers.current[id]) {
-        markers.current[id] = L.marker(newLatLng, { icon })
-          .addTo(mapRef.current)
-          .bindTooltip(v.vehicleNo || `Vehicle ${id}`, { direction: "top", offset: [0, -10] });
-      } else {
-        markers.current[id].setLatLng(newLatLng);
-      }
-
-      // Update Path if available
-      if (v.path?.length > 0) {
-        const latlngs = v.path.map((p) => [p.latitude, p.longitude]);
-        if (!paths.current[id]) {
-          paths.current[id] = L.polyline(latlngs, { color: "cyan", weight: 4 }).addTo(mapRef.current);
-        } else {
-          paths.current[id].setLatLngs(latlngs);
-        }
-      }
+  useEffect(() => {
+    const selected = new Set(selectedConsumerIds.map(String));
+    Object.entries(consumerMarkers.current).forEach(([id, marker]) => {
+      marker.setStyle({
+        fillColor: selected.has(id) ? "#facc15" : "#f97316",
+        color: selected.has(id) ? "#854d0e" : "#fff",
+        weight: selected.has(id) ? 3 : 2,
+      });
     });
+  }, [selectedConsumerIds, consumerList]);
+
+  const searchArea = () => {
+    const query = areaQuery.trim().toLowerCase();
+    if (!query) {
+      setAreaMessage("Enter an area, street, or locality name.");
+      return;
+    }
+    const matches = consumerList.filter((consumer) => [consumer.locality, consumer.streetName, consumer.street_name, consumer.address]
+      .some((value) => String(value || "").toLowerCase().includes(query)));
+    const points = matches.map((consumer) => coordinates(consumer.latitude, consumer.longitude)).filter(Boolean);
+    if (!points.length) {
+      setAreaMessage("No mapped consumers found for that area name.");
+      return;
+    }
+    setAreaMessage(`${points.length} mapped consumer${points.length === 1 ? "" : "s"} found.`);
+    map.current?.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 18 });
   };
 
-  // --- Logic: Households ---
-  const sparedConsumer = (list) => {
-    if (!list || list.length === 0) return;
-    const validPoints = [];
-    list.forEach((v) => {
-      if (!v.latitude || !v.longitude) return;
-      const lat = parseFloat(v.latitude);
-      const lng = parseFloat(v.longitude);
-      const houseKey = `${v.id}`;
-
-      if (!householdMarkers.current[houseKey]) {
-        const hMarker = L.circleMarker([lat, lng], {
-          radius: 7,
-          fillColor: "#e74c3c",
-          color: "#fff",
-          weight: 2,
-          fillOpacity: 0.9,
-        }).addTo(mapRef.current);
-
-        hMarker.bindPopup(`<b>Consumer:</b> ${v.consumer_no}<br>ID: ${v.id}`);
-        householdMarkers.current[houseKey] = hMarker;
-      }
-      validPoints.push([lat, lng]);
-    });
-
-    if (validPoints.length > 0 && mapRef.current) {
-      mapRef.current.fitBounds(L.latLngBounds(validPoints), { padding: [50, 50] });
-    }
-  };
-
-  const updateVisitingColor = (visitedList) => {
-    visitedList.forEach((visited) => {
-      const houseKey = `${visited.consumer_id}`;
-      const targetMarker = householdMarkers.current[houseKey];
-      if (targetMarker) {
-        targetMarker.setStyle({ fillColor: "#2ecc71" });
-      }
+  const toggleConsumer = (consumerId) => {
+    const id = String(consumerId);
+    setSelectedConsumerIds((current) => {
+      if (consumerSelectionMode === "single") return [id];
+      if (current.includes(id)) return current.filter((item) => item !== id);
+      return [...current, id];
     });
   };
 
   return (
-    <div>
-      <h2 className="text-lg font-bold mb-2">Live Real-Time Tracker</h2>
-      <div id="vehicle-map" style={{ height: "450px", width: "100%", borderRadius: "8px" }}></div>
-    </div>
+    <section className="space-y-4">
+      <h2 className="text-lg font-bold">Live field and vehicle monitoring</h2>
+      <p className="text-sm text-gray-600">Double-click anywhere on the map to drop a pin and look up its mapped place name.</p>
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-white p-3">
+        <label className="flex flex-col gap-1 text-sm font-medium">
+          TC route
+          <select className="min-w-48 rounded border px-3 py-2" value={selectedTc} onChange={(event) => setSelectedTc(event.target.value)}>
+            <option value="">All TCs</option>
+            {tcList.map((tc) => <option key={tc.id} value={tc.id}>{tc.name}</option>)}
+          </select>
+        </label>
+        <div className="flex min-w-64 flex-col gap-2 text-sm font-medium">
+          <span>Consumers ({selectedConsumerIds.length} selected)</span>
+          <div className="flex gap-2">
+            <button type="button" className={`rounded border px-3 py-1 ${consumerSelectionMode === "single" ? "bg-blue-600 text-white" : ""}`} onClick={() => { setConsumerSelectionMode("single"); setSelectedConsumerIds((current) => current.slice(0, 1)); }}>Single</button>
+            <button type="button" className={`rounded border px-3 py-1 ${consumerSelectionMode === "multiple" ? "bg-blue-600 text-white" : ""}`} onClick={() => setConsumerSelectionMode("multiple")}>Multiple</button>
+            {selectedConsumerIds.length > 0 && <button type="button" className="rounded border px-3 py-1" onClick={() => setSelectedConsumerIds([])}>Clear</button>}
+          </div>
+          <input className="rounded border px-3 py-2" value={consumerQuery} onChange={(event) => setConsumerQuery(event.target.value)} placeholder="Search consumer, holding, street, locality" />
+          <div className="max-h-40 overflow-y-auto rounded border p-2">
+            {filteredConsumerList.slice(0, 100).map((consumer) => {
+              const id = String(consumer.id);
+              return <label key={id} className="flex cursor-pointer items-center gap-2 py-1 font-normal">
+                <input type={consumerSelectionMode === "single" ? "radio" : "checkbox"} name="consumer-destination" checked={selectedConsumerIds.includes(id)} onChange={() => toggleConsumer(id)} />
+                <span>{consumer.consumerNo || consumer.consumer_no || `Consumer ${id}`} · {consumerBuildingName(consumer)}</span>
+              </label>;
+            })}
+            {filteredConsumerList.length === 0 && <p className="py-2 text-gray-500">No matching consumers.</p>}
+            {filteredConsumerList.length > 100 && <p className="py-2 text-xs text-gray-500">Showing first 100 matches. Refine your search.</p>}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 text-sm font-medium">
+          <label htmlFor="area-search">Search area name</label>
+          <div className="flex gap-2">
+            <input id="area-search" className="w-56 rounded border px-3 py-2" value={areaQuery} onChange={(event) => setAreaQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") searchArea(); }} placeholder="Street or locality" />
+            <button type="button" className="rounded bg-slate-700 px-3 py-2 text-white" onClick={searchArea}>Find</button>
+          </div>
+          {areaMessage && <span className="text-xs text-gray-500">{areaMessage}</span>}
+        </div>
+        {directionsUrl && <a className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white" href={directionsUrl} target="_blank" rel="noreferrer">Route from latest TC visit{selectedConsumerIds.length > 1 ? " to first selected" : ""}</a>}
+        <span className="text-xs text-gray-500">Blue: vehicle · Purple: TC visit route · Yellow: selected consumer · Red: visited consumer · Orange: other consumer</span>
+      </div>
+      <div ref={mapElement} style={{ height: 480, width: "100%", borderRadius: 8 }} />
+      <CctvMonitor />
+    </section>
   );
 }
 
