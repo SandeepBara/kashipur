@@ -21,14 +21,15 @@ const coordinates = (latitude, longitude) => {
 };
 
 const consumerBuildingName = (consumer) => {
+  const consumerNo = consumer?.consumer_no??consumer?.consumerNo;
   const holding = consumer?.holdingNo ?? consumer?.holding_no;
   const house = consumer?.houseNo ?? consumer?.house_no;
   const street = consumer?.streetName ?? consumer?.street_name;
   const locality = consumer?.locality;
   const address = consumer?.address;
-  const identity = [holding && `Holding ${holding}`, house && `House ${house}`].filter(Boolean).join(" · ");
+  const identity = [consumerNo && `Consumer No: ${consumerNo}`,holding && `Holding: ${holding}`, house && `House ${house}`].filter(Boolean).join(" . ");
   const area = [street, locality, address].filter(Boolean).join(", ");
-  return [identity || (consumer?.consumerNo ?? consumer?.consumer_no ?? `Consumer ${consumer?.id}`), area].filter(Boolean).join(" — ");
+  return [identity , area].filter(Boolean).join(" — ");
 };
 
 function VehicleTracker() {

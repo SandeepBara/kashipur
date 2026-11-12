@@ -1,4 +1,5 @@
 import { Alert, Text, TouchableOpacity, View } from "react-native";
+import Icon from "react-native-vector-icons/Feather";
 import { globalStyle } from "../styles/globalStyle";
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useState } from "react";
@@ -33,7 +34,7 @@ export const Sidebar = ({ visible, onClose, title }) => {
             });
             if (response?.data?.status) {                
                 onClose();
-                removeAuthToken();
+                await removeAuthToken();
                 navigation.replace('Login');
                 Alert.alert('Success', 'User Logout Successfully!');
             }
@@ -41,7 +42,7 @@ export const Sidebar = ({ visible, onClose, title }) => {
             console.error("Logout error:", error);
             Alert.alert("Error","Error logging out");
         }finally{
-            setLoading(true);
+            setLoading(false);
         }
     }
   if (!visible) return null;
@@ -121,8 +122,11 @@ export const Sidebar = ({ visible, onClose, title }) => {
                 onPress={() => {
                     handelLogOut();
                 }}
+                disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel="Logout"
                 >
-                <Text style={globalStyle.menuItemIcon}>⏻</Text>
+                <Icon name="log-out" size={18} color="#B84C4C" style={{ marginRight: 15 }} />
                 <Text style={globalStyle.menuItemText}>Logout</Text>
                 </TouchableOpacity>
             </View>

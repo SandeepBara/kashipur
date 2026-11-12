@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import axios from 'axios';
+import Icon from 'react-native-vector-icons/Feather';
 import { LOGIN_API } from '../../api/endpoints';
 import { setAuthToken } from '../../util/auth';
 import COLORS from '../../constants/colors';
@@ -24,6 +25,7 @@ function Login({ navigation }) {
   const [email, setEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -130,18 +132,34 @@ function Login({ navigation }) {
           />
 
           <Text style={[styles.label, styles.passwordLabel]}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your password"
-            placeholderTextColor={COLORS.textGrey}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-            onSubmitEditing={handleLogin}
-          />
+          <View style={styles.passwordInputRow}>
+            <TextInput
+              style={[styles.input, styles.passwordInput]}
+              placeholder="Enter your password"
+              placeholderTextColor={COLORS.textGrey}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={handleLogin}
+            />
+            <TouchableOpacity
+              style={styles.passwordToggle}
+              onPress={() => setShowPassword(current => !current)}
+              accessibilityRole="button"
+              accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+              accessibilityState={{ selected: showPassword }}
+              hitSlop={8}
+            >
+              <Icon
+                name={showPassword ? 'eye-off' : 'eye'}
+                size={18}
+                color={COLORS.primary}
+              />
+            </TouchableOpacity>
+          </View>
 
           <TouchableOpacity
             style={[styles.loginButton, loading && styles.loginButtonDisabled]}
@@ -159,7 +177,7 @@ function Login({ navigation }) {
         <View pointerEvents="none" style={styles.loadingOverlay}>
           <View style={styles.loadingPill}>
             <ActivityIndicator color={COLORS.primary} size="small" />
-            <Text style={styles.loadingText}>Connecting securely…</Text>
+            <Text style={styles.loadingText}>Login…</Text>
           </View>
         </View>
       )}
@@ -191,6 +209,9 @@ const styles = StyleSheet.create({
   toggleLabelActive: { color: COLORS.primary, fontWeight: '700' },
   label: { color: '#38463D', fontSize: 12, fontWeight: '700', marginBottom: 8 },
   passwordLabel: { marginTop: 17 },
+  passwordInputRow: { flexDirection: 'row', alignItems: 'center', height: 52, borderWidth: 1, borderColor: '#DFE7E1', borderRadius: 13, backgroundColor: '#FBFCFB' },
+  passwordInput: { flex: 1, height: 50, borderWidth: 0, backgroundColor: 'transparent', paddingRight: 6 },
+  passwordToggle: { minWidth: 58, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: 4, borderRadius: 10 },
   input: { height: 52, borderWidth: 1, borderColor: '#DFE7E1', borderRadius: 13, paddingHorizontal: 15, backgroundColor: '#FBFCFB', color: '#1D2922', fontSize: 14 },
   loginButton: { minHeight: 54, borderRadius: 14, backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center', marginTop: 24, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 10, elevation: 3 },
   loginButtonDisabled: { opacity: 0.78 },
