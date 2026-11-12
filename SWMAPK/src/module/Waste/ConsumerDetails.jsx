@@ -6,7 +6,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Linking,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
 import COLORS from '../../constants/colors';
 import axios from 'axios';
 import { getToken } from '../../util/auth';
@@ -34,6 +36,44 @@ const ConsumerDetails = ({ route }) => {
   const [viewDemandModalVisible, setViewDemandModalVisible] = useState(false);
   const [proceedPaymentModalVisible, setProceedPaymentModalVisible] =
     useState(false);
+
+  const openConsumerLocation = async () => {
+    const latitudeValue = consumerData?.latitude;
+    const longitudeValue = consumerData?.longitude;
+    const latitude = Number(latitudeValue);
+    const longitude = Number(longitudeValue);
+    const hasCoordinates = Number.isFinite(latitude)
+      && Number.isFinite(longitude)
+      && latitudeValue !== null
+      && latitudeValue !== undefined
+      && longitudeValue !== null
+      && longitudeValue !== undefined
+      && String(latitudeValue).trim() !== ''
+      && String(longitudeValue).trim() !== ''
+      && latitude >= -90
+      && latitude <= 90
+      && longitude >= -180
+      && longitude <= 180
+      && !(latitude === 0 && longitude === 0);
+    if (!hasCoordinates) {
+      Alert.alert('Location unavailable', 'This consumer does not have saved latitude and longitude coordinates.');
+      return;
+    }
+
+    const label = encodeURIComponent(consumerData?.consumerNo || 'Consumer location');
+    const destination = `${latitude},${longitude}`;
+    const geoUrl = `geo:${latitude},${longitude}?q=${latitude},${longitude}(${label})`;
+
+    try {
+      await Linking.openURL(geoUrl);
+    } catch {
+      try {
+        await Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`);
+      } catch {
+        Alert.alert('Could not open Maps', 'Install or enable a maps app and try again.');
+      }
+    }
+  };
 
   useEffect(() => {
     if (id) fetchConsumerDetails();
@@ -96,6 +136,22 @@ const ConsumerDetails = ({ route }) => {
       <View style={globalStyle.mainContent}>
         {/* Basic Details Card */}
         <DetailCard title={'Basic Info'} infoFields={infoFields} />
+
+        <TouchableOpacity
+          style={styles.mapButton}
+          onPress={openConsumerLocation}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+        >
+          <View style={styles.mapButtonIcon}>
+            <Icon name="navigation" size={19} color={COLORS.primary} />
+          </View>
+          <View style={styles.mapButtonCopy}>
+            <Text style={styles.mapButtonTitle}>Navigate to consumer</Text>
+            <Text style={styles.mapButtonSubtitle}>Open directions in Maps</Text>
+          </View>
+          <Icon name="arrow-up-right" size={18} color={COLORS.primary} />
+        </TouchableOpacity>
 
         {/* Owner Details Table */}
         <DataTableFullData
@@ -227,4 +283,34 @@ const ConsumerDetails = ({ route }) => {
     </Layout>
   );
 };
+
+const styles = StyleSheet.create({
+  mapButton: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 10,
+    marginTop: 2,
+    marginBottom: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#EAF3ED',
+    borderWidth: 1,
+    borderColor: '#DCE9DF',
+    borderRadius: 16,
+  },
+  mapButtonIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  mapButtonCopy: { flex: 1 },
+  mapButtonTitle: { color: '#1D2922', fontSize: 14, fontWeight: '700' },
+  mapButtonSubtitle: { color: '#718077', fontSize: 11, marginTop: 4 },
+});
+
 export default ConsumerDetails;
