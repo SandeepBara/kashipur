@@ -16,7 +16,7 @@ const HeaderCard = ({
   };
 
   return (
-    <div className="bg-white shadow p-2 px-4 border border-blue-800 rounded-lg">
+    <div className="bg-white shadow-sm p-4 sm:px-5 border border-slate-200 rounded-xl">
       <div className="flex flex-wrap justify-between items-center gap-4">
         {/* Icon and Info */}
         {applicationNo && (
@@ -25,9 +25,9 @@ const HeaderCard = ({
               <FaInfoCircle />
             </div>
             <div>
-              <p className="text-gray-700 text-sm">
+              <p className="text-slate-600 text-sm leading-6">
                 Your applied application no. is{" "}
-                <span className="font-bold text-orange-600 text-xl">
+                <span className="font-bold text-teal-700 text-lg sm:text-xl break-all">
                   {applicationNo}
                 </span>
                 <button
@@ -49,7 +49,7 @@ const HeaderCard = ({
 
         {/* Status */}
         {statusText && (
-          <div className="bg-blue-50 px-4 py-2 border border-blue-200 rounded-md font-semibold text-green-700 text-sm">
+          <div className="bg-emerald-50 px-4 py-2 border border-emerald-200 rounded-lg font-semibold text-emerald-800 text-sm">
             Current Status:{" "}
             <span className={`font-bold ${statusColor}`}>{statusText}</span>
           </div>

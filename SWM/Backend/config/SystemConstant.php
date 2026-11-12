@@ -100,4 +100,8 @@ return [
         "BOUNCED"=>3
     ],
     "HOLDING_VALIDATE"=>env("HOLDING_API","127.0.0.1"),
+    "CAN_CRUDE_CCTV"=>[
+        "SUPER ADMIN",
+        "ADMIN",
+    ]
 ];

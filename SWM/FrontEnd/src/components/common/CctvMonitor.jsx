@@ -1,14 +1,20 @@
 import axios from "axios";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { swmCctvCameraListApi } from "../../api/endpoints";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FiVideo } from "react-icons/fi";
+import CameraTile from "./CameraTile";
+import { swmCctvCameraAddApi, swmCctvCameraDeleteApi, swmCctvCameraEditApi, swmCctvCameraListApi } from "../../api/endpoints";
 import { getToken } from "../../utils/auth";
 
 const inferType = (camera) => {
-  if (camera.type) return camera.type;
   const url = String(camera.streamUrl || "").toLowerCase();
+  if (camera.type && !["ip", "rtsp", "ffmpeg"].includes(camera.type)) return camera.type;
+  if (/^wss?:\/\//.test(url)) return "webrtc";
   if (url.includes(".m3u8")) return "hls";
   if (/\.(mp4|webm|ogg)(\?|$)/.test(url)) return "video";
   if (/\.(mjpeg|mjpg)(\?|$)/.test(url)) return "mjpeg";
+  if (camera.type === "rtsp") return url ? "viewer" : "rtsp";
+  if (camera.type === "ffmpeg") return url ? "viewer" : "ffmpeg";
+  if (camera.type === "ip") return url ? "viewer" : "ip";
   return "viewer";
 };
 
@@ -19,14 +25,18 @@ function CameraFeed({ camera }) {
 
   useEffect(() => setStatus("Connecting…"), [camera.id, streamUrl]);
 
-  if (type === "rtsp") {
+  if (["ip", "rtsp", "ffmpeg"].includes(type) && !streamUrl) {
     return <div className="flex h-[300px] items-center justify-center bg-slate-950 p-6 text-center text-sm text-white">
-      This camera uses RTSP. Connect it through an NVR or RTSP-to-HLS/WebRTC gateway, then configure the browser stream URL. The RTSP address stays on the server.
+      Add a browser playback URL from your camera, NVR, or go2rtc gateway to view this IP camera. Use its HLS, WebRTC viewer, or MJPEG URL. The RTSP source and credentials stay encrypted on the server.
     </div>;
   }
 
   if (!streamUrl) {
     return <div className="flex h-[300px] items-center justify-center bg-slate-950 p-6 text-center text-sm text-white">No stream URL is configured for this camera.</div>;
+  }
+
+  if (type === "webrtc") {
+    return <CameraTile camera={camera} />;
   }
 
   if (type === "viewer") {
@@ -79,20 +89,32 @@ export default function CctvMonitor() {
   const [layout, setLayout] = useState("single");
   const [refreshKey, setRefreshKey] = useState(0);
   const [loadError, setLoadError] = useState(false);
+  const [canManage, setCanManage] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const emptyForm = { id: "", name: "", type: "viewer", streamUrl: "", sourceUrl: "" };
+  const [form, setForm] = useState(emptyForm);
 
-  useEffect(() => {
+  const loadCameras = useCallback(async () => {
     if (!token) return;
-    axios.post(swmCctvCameraListApi, {}, {
+    setLoadError(false);
+    try {
+      const response = await axios.post(swmCctvCameraListApi, {}, {
       headers: { Authorization: `Bearer ${token}` },
-    }).then((response) => {
-      const rows = response?.data?.status ? response.data.data || [] : [];
+      });
+      const payload = response?.data?.status ? response.data.data || {} : {};
+      const rows = payload.cameras || [];
       setCameras(rows);
-      setSelectedCameraId((current) => current || rows[0]?.id || "");
-    }).catch((error) => {
+      setCanManage(Boolean(payload.canManage));
+      setSelectedCameraId((current) => rows.some((camera) => String(camera.id) === String(current)) ? current : rows[0]?.id || "");
+    } catch (error) {
       console.error("Could not load CCTV cameras", error);
       setLoadError(true);
-    });
+    }
   }, [token]);
+
+  useEffect(() => { loadCameras(); }, [loadCameras]);
 
   const visibleCameras = useMemo(() => layout === "grid"
     ? cameras.slice(0, 4)
@@ -101,32 +123,124 @@ export default function CctvMonitor() {
   const refreshFeeds = () => setRefreshKey((key) => key + 1);
   const openFullscreen = () => wallRef.current?.requestFullscreen?.();
 
+  const editCamera = (camera) => {
+    setForm({ id: camera.id, name: camera.name, type: camera.type, streamUrl: camera.streamUrl || "", sourceUrl: "" });
+    setFormError("");
+    setShowForm(true);
+  };
+
+  const saveCamera = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setFormError("");
+    try {
+      const submitForm = { ...form };
+      if (/^ffmpeg:/i.test(String(submitForm.streamUrl || "").trim())) {
+        submitForm.type = "ffmpeg";
+        submitForm.sourceUrl = submitForm.streamUrl.trim();
+        submitForm.streamUrl = "";
+      }
+      const saveUrl = submitForm.id ? swmCctvCameraEditApi : swmCctvCameraAddApi;
+      const response = await axios.post(saveUrl, submitForm, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response?.data?.status) throw new Error(response?.data?.message || "Could not save camera");
+      setShowForm(false);
+      setForm(emptyForm);
+      await loadCameras();
+    } catch (error) {
+      const errors = error.response?.data?.errors;
+      setFormError(Object.values(errors || {}).flat().join(" ") || error.response?.data?.message || error.message || "Could not save camera");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeCamera = async (camera) => {
+    if (!window.confirm(`Remove ${camera.name} from CCTV monitoring?`)) return;
+    try {
+      const response = await axios.post(swmCctvCameraDeleteApi, { id: camera.id }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response?.data?.status) throw new Error(response?.data?.message || "Could not remove camera");
+      await loadCameras();
+    } catch (error) {
+      setFormError(error.response?.data?.message || "Could not remove camera");
+    }
+  };
+
   return (
-    <section ref={wallRef} className="space-y-3 rounded-lg border bg-white p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section ref={wallRef} className="space-y-4 rounded-2xl bg-white p-4 sm:p-5">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
-          <h3 className="font-semibold">CCTV monitoring</h3>
-          <p className="text-xs text-gray-500">{cameras.length} configured camera{cameras.length === 1 ? "" : "s"}</p>
+          <div className="flex items-center gap-2">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700"><FiVideo size={18} /></span>
+            <div>
+              <h3 className="font-semibold text-slate-900">Camera monitoring</h3>
+              <p className="mt-0.5 text-xs text-slate-500">{cameras.length} configured camera{cameras.length === 1 ? "" : "s"}</p>
+            </div>
+          </div>
         </div>
-        {cameras.length > 0 && <div className="flex flex-wrap items-center gap-2">
-          {layout === "single" && <select aria-label="Select CCTV camera" className="rounded border px-3 py-2 text-sm" value={selectedCameraId} onChange={(event) => setSelectedCameraId(event.target.value)}>
+        <div className="flex flex-wrap items-center gap-2">
+          {cameras.length > 0 && <>
+          {layout === "single" && <select aria-label="Select CCTV camera" className="min-h-10 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 sm:min-w-48 sm:flex-none" value={selectedCameraId} onChange={(event) => setSelectedCameraId(event.target.value)}>
             {cameras.map((camera) => <option key={camera.id} value={camera.id}>{camera.name}</option>)}
           </select>}
-          <button type="button" className={`rounded border px-3 py-2 text-sm ${layout === "single" ? "bg-slate-800 text-white" : ""}`} onClick={() => setLayout("single")}>Single view</button>
-          <button type="button" className={`rounded border px-3 py-2 text-sm ${layout === "grid" ? "bg-slate-800 text-white" : ""}`} onClick={() => setLayout("grid")}>2×2 grid</button>
-          <button type="button" className="rounded border px-3 py-2 text-sm" onClick={refreshFeeds}>Refresh feeds</button>
-          <button type="button" className="rounded border px-3 py-2 text-sm" onClick={openFullscreen}>Fullscreen</button>
-        </div>}
+          <button type="button" className={`min-h-10 rounded-xl border px-3 text-xs font-semibold transition ${layout === "single" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`} onClick={() => setLayout("single")}>Single</button>
+          <button type="button" className={`min-h-10 rounded-xl border px-3 text-xs font-semibold transition ${layout === "grid" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`} onClick={() => setLayout("grid")}>2×2 grid</button>
+          <button type="button" className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50" onClick={refreshFeeds}>Refresh</button>
+          <button type="button" className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50" onClick={openFullscreen}>Fullscreen</button>
+          </>}
+          {canManage && <button type="button" className="min-h-10 rounded-xl bg-emerald-700 px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-800" onClick={() => { setForm(emptyForm); setFormError(""); setShowForm(true); }}>Add camera</button>}
+        </div>
       </div>
-      {loadError ? <p className="rounded bg-red-50 p-3 text-sm text-red-700">Unable to load configured cameras. Check access and backend CCTV settings.</p> : cameras.length === 0 ? (
-        <p className="rounded bg-slate-50 p-4 text-sm text-gray-600">No cameras configured. Add camera types and stream URLs to the backend <code>CCTV_CAMERAS</code> setting.</p>
+      {showForm && <form onSubmit={saveCamera} className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
+        <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-slate-600">Camera name
+          <input required maxLength={150} className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+        </label>
+        <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-slate-600">Camera type
+          <select className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={form.type} onChange={(event) => setForm((current) => ({ ...current, type: event.target.value }))}>
+            <option value="viewer">NVR / WebRTC viewer</option>
+            <option value="hls">HLS</option>
+            <option value="video">MP4 / WebM</option>
+            <option value="mjpeg">MJPEG</option>
+            <option value="webrtc">go2rtc WebRTC</option>
+            <option value="ip">IP camera (RTSP)</option>
+            <option value="rtsp">RTSP source</option>
+            <option value="ffmpeg">FFmpeg source (go2rtc)</option>
+          </select>
+        </label>
+        {!['ip', 'rtsp', 'ffmpeg'].includes(form.type) ? <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-slate-600 sm:col-span-2">{form.type === "webrtc" ? "go2rtc WebSocket URL" : "Browser stream or viewer URL"}
+          <input required type="url" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={form.streamUrl} onChange={(event) => setForm((current) => ({ ...current, streamUrl: event.target.value }))} placeholder={form.type === "webrtc" ? "ws://192.168.1.10:1984/api/ws?src=frontdoor" : "https://nvr.example/camera/1"} />
+        </label> : <>
+          <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-slate-600">Private camera source (encrypted at rest)
+            <input type="password" autoComplete="new-password" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={form.sourceUrl} onChange={(event) => setForm((current) => ({ ...current, sourceUrl: event.target.value }))} placeholder={form.id ? "Leave blank to keep current source" : form.type === "ffmpeg" ? "ffmpeg:http://camera-address/video#video=h264" : "rtsp://user:password@192.168.1.20:554/Streaming/Channels/101"} />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-slate-600">Optional browser playback or WebRTC URL
+            <input type="url" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={form.streamUrl} onChange={(event) => setForm((current) => ({ ...current, streamUrl: event.target.value }))} placeholder="ws://gateway:1984/api/ws?src=frontdoor" />
+          </label>
+        </>}
+        <p className="text-xs leading-5 text-slate-500 sm:col-span-2">For go2rtc WebRTC, use a WebSocket endpoint such as ws://gateway:1984/api/ws?src=camera-name. RTSP credentials stay encrypted. The browser must reach the gateway; HTTPS deployments need wss://.</p>
+        {formError && <p className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 sm:col-span-2">{formError}</p>}
+        <div className="flex flex-col-reverse gap-2 sm:col-span-2 sm:flex-row sm:justify-end">
+          <button type="button" className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50" onClick={() => setShowForm(false)}>Cancel</button>
+          <button disabled={saving} type="submit" className="min-h-11 rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-50">{saving ? "Saving…" : form.id ? "Save changes" : "Add camera"}</button>
+        </div>
+      </form>}
+      {loadError ? <p className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700">Unable to load configured cameras. Check access and backend CCTV settings.</p> : cameras.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
+          <span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-white text-emerald-700 shadow-sm"><FiVideo size={20} /></span>
+          <p className="mt-3 text-sm font-semibold text-slate-800">No cameras configured</p>
+          <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-slate-500">Add an IP camera, NVR viewer or go2rtc stream to start monitoring live feeds.</p>
+          {canManage && <button type="button" className="mt-4 min-h-10 rounded-xl bg-emerald-700 px-4 text-xs font-semibold text-white hover:bg-emerald-800" onClick={() => { setForm(emptyForm); setFormError(""); setShowForm(true); }}>Configure a camera</button>}
+        </div>
       ) : (
-        <div className={`grid gap-3 ${layout === "grid" ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
+        <div className={`grid gap-4 ${layout === "grid" ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
           {visibleCameras.map((camera) => (
-            <article key={`${camera.id}-${refreshKey}`} className="overflow-hidden rounded border bg-black">
-              <div className="flex items-center justify-between bg-slate-900 px-3 py-2 text-sm text-white">
-                <span>{camera.name}</span>
-                <span className="text-xs text-slate-300">{inferType(camera).toUpperCase()}</span>
+            <article key={`${camera.id}-${refreshKey}`} className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 shadow-sm">
+              <div className="flex min-h-12 items-center justify-between gap-3 bg-slate-900 px-3 py-2.5 text-sm text-white sm:px-4">
+                <span className="min-w-0 truncate font-semibold">{camera.name} <span className="ml-1 rounded-md bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-slate-300">{camera.type}</span></span>
+                {canManage && <div className="flex shrink-0 gap-3 text-xs font-medium text-slate-300"><button type="button" className="transition hover:text-white" onClick={() => editCamera(camera)}>Edit</button><button type="button" className="transition hover:text-rose-300" onClick={() => removeCamera(camera)}>Remove</button></div>}
               </div>
               <CameraFeed key={`${camera.id}-${refreshKey}`} camera={camera} />
             </article>

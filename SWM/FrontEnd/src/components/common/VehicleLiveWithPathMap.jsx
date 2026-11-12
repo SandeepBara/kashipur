@@ -184,7 +184,18 @@ function VehicleTracker() {
     map.current.doubleClickZoom.disable();
     map.current.on("dblclick", handleMapDoubleClick);
 
+    let mapResizeObserver;
+    try {
+      if (window.ResizeObserver) {
+        mapResizeObserver = new ResizeObserver(() => map.current?.invalidateSize({ pan: false }));
+        mapResizeObserver.observe(mapElement.current);
+      }
+    } catch (error) {
+      console.error("Could not observe the responsive map size", error);
+    }
+
     return () => {
+      mapResizeObserver?.disconnect();
       map.current?.off("dblclick", handleMapDoubleClick);
       if (echo.current) echo.current.disconnect();
       echo.current = null;
@@ -356,49 +367,60 @@ function VehicleTracker() {
 
   return (
     <section className="space-y-4">
-      <h2 className="text-lg font-bold">Live field and vehicle monitoring</h2>
-      <p className="text-sm text-gray-600">Double-click anywhere on the map to drop a pin and look up its mapped place name.</p>
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-white p-3">
-        <label className="flex flex-col gap-1 text-sm font-medium">
+      <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4 xl:grid-cols-[minmax(220px,0.8fr)_minmax(300px,1.35fr)_minmax(230px,0.85fr)]">
+        <label className="flex min-w-0 flex-col gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           TC route
-          <select className="min-w-48 rounded border px-3 py-2" value={selectedTc} onChange={(event) => setSelectedTc(event.target.value)}>
+          <select className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium normal-case tracking-normal text-slate-800 shadow-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={selectedTc} onChange={(event) => setSelectedTc(event.target.value)}>
             <option value="">All TCs</option>
             {tcList.map((tc) => <option key={tc.id} value={tc.id}>{tc.name}</option>)}
           </select>
         </label>
-        <div className="flex min-w-64 flex-col gap-2 text-sm font-medium">
-          <span>Consumers ({selectedConsumerIds.length} selected)</span>
-          <div className="flex gap-2">
-            <button type="button" className={`rounded border px-3 py-1 ${consumerSelectionMode === "single" ? "bg-blue-600 text-white" : ""}`} onClick={() => { setConsumerSelectionMode("single"); setSelectedConsumerIds((current) => current.slice(0, 1)); }}>Single</button>
-            <button type="button" className={`rounded border px-3 py-1 ${consumerSelectionMode === "multiple" ? "bg-blue-600 text-white" : ""}`} onClick={() => setConsumerSelectionMode("multiple")}>Multiple</button>
-            {selectedConsumerIds.length > 0 && <button type="button" className="rounded border px-3 py-1" onClick={() => setSelectedConsumerIds([])}>Clear</button>}
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Consumer destination <span className="normal-case tracking-normal text-slate-400">({selectedConsumerIds.length} selected)</span></span>
+            <div className="flex rounded-lg bg-slate-200/70 p-0.5">
+              <button type="button" className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${consumerSelectionMode === "single" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`} onClick={() => { setConsumerSelectionMode("single"); setSelectedConsumerIds((current) => current.slice(0, 1)); }}>Single</button>
+              <button type="button" className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${consumerSelectionMode === "multiple" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`} onClick={() => setConsumerSelectionMode("multiple")}>Multiple</button>
+              {selectedConsumerIds.length > 0 && <button type="button" className="px-2 py-1.5 text-xs font-semibold text-slate-500 hover:text-rose-700" onClick={() => setSelectedConsumerIds([])}>Clear</button>}
+            </div>
           </div>
-          <input className="rounded border px-3 py-2" value={consumerQuery} onChange={(event) => setConsumerQuery(event.target.value)} placeholder="Search consumer, holding, street, locality" />
-          <div className="max-h-40 overflow-y-auto rounded border p-2">
+          <input className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={consumerQuery} onChange={(event) => setConsumerQuery(event.target.value)} placeholder="Search name, holding, street or locality" />
+          <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
             {filteredConsumerList.slice(0, 100).map((consumer) => {
               const id = String(consumer.id);
-              return <label key={id} className="flex cursor-pointer items-center gap-2 py-1 font-normal">
-                <input type={consumerSelectionMode === "single" ? "radio" : "checkbox"} name="consumer-destination" checked={selectedConsumerIds.includes(id)} onChange={() => toggleConsumer(id)} />
-                <span>{consumer.consumerNo || consumer.consumer_no || `Consumer ${id}`} · {consumerBuildingName(consumer)}</span>
+              return <label key={id} className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-sm transition hover:bg-emerald-50">
+                <input className="mt-0.5 accent-emerald-600" type={consumerSelectionMode === "single" ? "radio" : "checkbox"} name="consumer-destination" checked={selectedConsumerIds.includes(id)} onChange={() => toggleConsumer(id)} />
+                <span className="min-w-0"><span className="block font-medium text-slate-800">{consumer.consumerNo || consumer.consumer_no || `Consumer ${id}`}</span><span className="block truncate text-xs text-slate-500">{consumerBuildingName(consumer)}</span></span>
               </label>;
             })}
             {filteredConsumerList.length === 0 && <p className="py-2 text-gray-500">No matching consumers.</p>}
             {filteredConsumerList.length > 100 && <p className="py-2 text-xs text-gray-500">Showing first 100 matches. Refine your search.</p>}
           </div>
         </div>
-        <div className="flex flex-col gap-1 text-sm font-medium">
-          <label htmlFor="area-search">Search area name</label>
+        <div className="flex min-w-0 flex-col gap-2">
+          <label htmlFor="area-search" className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search area</label>
           <div className="flex gap-2">
-            <input id="area-search" className="w-56 rounded border px-3 py-2" value={areaQuery} onChange={(event) => setAreaQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") searchArea(); }} placeholder="Street or locality" />
-            <button type="button" className="rounded bg-slate-700 px-3 py-2 text-white" onClick={searchArea}>Find</button>
+            <input id="area-search" className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" value={areaQuery} onChange={(event) => setAreaQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") searchArea(); }} placeholder="Street or locality" />
+            <button type="button" className="rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-700" onClick={searchArea}>Find</button>
           </div>
           {areaMessage && <span className="text-xs text-gray-500">{areaMessage}</span>}
         </div>
-        {directionsUrl && <a className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white" href={directionsUrl} target="_blank" rel="noreferrer">Route from latest TC visit{selectedConsumerIds.length > 1 ? " to first selected" : ""}</a>}
-        <span className="text-xs text-gray-500">Blue: vehicle · Purple: TC visit route · Yellow: selected consumer · Red: visited consumer · Orange: other consumer</span>
+        {directionsUrl && <a className="inline-flex min-h-11 items-center justify-center rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 sm:col-span-2 xl:col-span-3" href={directionsUrl} target="_blank" rel="noreferrer">Open route from latest TC visit{selectedConsumerIds.length > 1 ? " to first selected consumer" : ""}</a>}
       </div>
-      <div ref={mapElement} style={{ height: 480, width: "100%", borderRadius: 8 }} />
-      <CctvMonitor />
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+        <div ref={mapElement} className="h-[360px] w-full rounded-xl sm:h-[440px] xl:h-[520px]" />
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-[11px] font-medium text-slate-500 sm:text-xs">
+        <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-blue-500" /> Vehicle</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-violet-500" /> TC visit route</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-amber-400" /> Selected consumer</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Visited</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-400" /> Other consumer</span>
+        <span className="ml-auto text-slate-400">Double-click map to pin a place</span>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <CctvMonitor />
+      </div>
     </section>
   );
 }

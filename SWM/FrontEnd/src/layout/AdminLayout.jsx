@@ -82,7 +82,7 @@ const AdminLayout = ({ children }) => {
   }, [isSidebarOpen]);
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="swm-shell flex flex-col h-screen">
       {/* Header */}
       <AdminHeader
         setIsSidebarOpen={setIsSidebarOpen}
@@ -91,7 +91,7 @@ const AdminLayout = ({ children }) => {
       />
 
       {/* Main Body */}
-      <div className="flex flex-1 relative overflow-hidden bg-gray-50">
+      <div className="swm-workspace flex flex-1 relative overflow-hidden bg-gray-50">
         {/* Sidebar */}
         <AdminSidebar
           sidebarRef={sidebarRef}
@@ -111,7 +111,7 @@ const AdminLayout = ({ children }) => {
 
         {/* Main content */}
         <main
-          className={`flex-1 p-4 overflow-y-auto transition-all duration-300 
+            className={`swm-main flex-1 min-w-0 p-4 overflow-y-auto transition-all duration-300
             ${isCollapsed ? "md:ml-30" : "md:ml-75"} 
             ${isSidebarOpen ? "blur-sm md:blur-0" : ""}
           `}
@@ -125,4 +125,5 @@ const AdminLayout = ({ children }) => {
   );
 };
 
+export { AdminLayout };
 export default AdminLayout;

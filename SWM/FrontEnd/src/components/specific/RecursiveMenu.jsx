@@ -75,11 +75,11 @@ const RecursiveMenu = ({ items, isCollapsed, level = 0 }) => {
           {/* === MENU ITEM === */}
           <div
             className={`flex items-center w-full gap-2 p-2 rounded-md transition-all duration-200 cursor-pointer 
-              hover:bg-gray-700
+              hover:bg-slate-800 hover:text-white
               ${
                 openItems[item.title]
-                  ? "bg-gray-800 text-white font-semibold"
-                  : "text-gray-300"
+                  ? "bg-teal-500/15 text-teal-200 font-semibold ring-1 ring-inset ring-teal-400/20"
+                  : "text-slate-300"
               }
               ${isCollapsed ? "justify-center" : "justify-between"}
             `}
@@ -151,7 +151,7 @@ const RecursiveMenu = ({ items, isCollapsed, level = 0 }) => {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -5 }}
               transition={{ duration: 0.15 }}
-              className="absolute left-full top-0 ml-1 bg-gray-800 rounded-md shadow-lg w-48 py-2 z-[9999]"
+              className="absolute left-full top-0 ml-1 bg-slate-900 rounded-xl shadow-xl ring-1 ring-white/10 w-52 py-2 z-[9999]"
             >
               <RecursiveMenu
                 items={item.subItems}
@@ -168,7 +168,7 @@ const RecursiveMenu = ({ items, isCollapsed, level = 0 }) => {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -5 }}
               transition={{ duration: 0.15 }}
-              className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-gray-800 text-white text-xs px-3 py-1 rounded-md shadow-lg whitespace-nowrap z-50"
+              className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-slate-900 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg whitespace-nowrap z-50"
             >
               {item.title}
             </motion.div>

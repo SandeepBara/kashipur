@@ -85,11 +85,11 @@ const AdminHeader = ({ setIsSidebarOpen, isSidebarOpen, ulbData }) => {
   if (!userDetails) return null;
 
   return (
-    <header className="flex justify-between items-center bg-gray-900 text-white px-4 py-3 z-50">
+    <header className="swm-header sticky top-0 flex justify-between items-center bg-gray-900 text-white px-4 py-3 z-50">
       <div className="flex items-center gap-3">
         {/* Mobile toggle button */}
         <button
-          className="md:hidden"
+          className="swm-menu-toggle md:hidden"
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
         >
           <FaBars className="text-xl" />
@@ -98,14 +98,14 @@ const AdminHeader = ({ setIsSidebarOpen, isSidebarOpen, ulbData }) => {
           <img
             src={ulbData?.logoImg}
             alt={ulbData?.shortName}
-            width={60}
-            height={60}
-            className="shadow rounded-full"
+            width={48}
+            height={48}
+            className="swm-brand-logo shadow rounded-full"
           />
         </a>
         <div className="hidden md:block">
-          <h1 className="font-bold text-xl md:text-3xl">{ulbData?.ulbName}</h1>
-          <p className="text-sm md:text-lg">{ulbData?.hindiUlbName}</p>
+          <h1 className="font-bold text-lg md:text-2xl">{ulbData?.ulbName}</h1>
+          <p className="text-sm md:text-base text-slate-300">{ulbData?.hindiUlbName}</p>
         </div>
       </div>
 

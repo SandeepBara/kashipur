@@ -1271,30 +1271,6 @@ class ReportController extends Controller
         }
     }
 
-    public function getCctvCameras(){
-        $cameras = collect(Config::get("cctv.cameras", []))
-            ->filter(function ($camera) {
-                if (!is_array($camera) || empty($camera["id"]) || empty($camera["name"])) return false;
-                $type = strtolower($camera["type"] ?? "viewer");
-                if (!in_array($type, ["viewer", "hls", "video", "mjpeg", "rtsp"], true)) return false;
-                if ($type === "rtsp") return true;
-                $url = $camera["stream_url"] ?? $camera["view_url"] ?? null;
-                if (!is_string($url)) return false;
-                $scheme = $url ? parse_url($url, PHP_URL_SCHEME) : null;
-                return $url && filter_var($url, FILTER_VALIDATE_URL) && in_array($scheme, ["http", "https"], true);
-            })
-            ->map(function ($camera) {
-                $type = strtolower($camera["type"] ?? "viewer");
-                $data = ["id" => (string) $camera["id"], "name" => (string) $camera["name"], "type" => $type];
-                // Keep raw RTSP addresses and credentials on the backend; browsers cannot play RTSP directly.
-                if ($type !== "rtsp") $data["stream_url"] = (string) ($camera["stream_url"] ?? $camera["view_url"]);
-                return $data;
-            })
-            ->values();
-
-        return responseMsg(true, "CCTV camera list", camelCase($cameras));
-    }
-
     public function todayWestCollectNotCollectConsumer(Request $request){
         try{
             $date = Carbon::parse($request->date)->format("Y-m-d");

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\DBSystem;
 use App\Exceptions\CustomException;
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessVehicleLog;
+use App\Models\DBSystem\CctvCamera;
 use App\Models\DBSystem\DriverDetail;
 use App\Models\DBSystem\UlbWardMaster;
 use App\Models\DBSystem\VehicleDetail;
@@ -17,6 +18,7 @@ use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Validator;
@@ -42,6 +44,206 @@ class SWMAssetsController extends Controller
         $this->_VehicleMovementLog = new VehicleMovementLog();
         $this->_DriverDetail = new DriverDetail();
         $this->_UlbWardMaster = new UlbWardMaster();
+    }
+
+    private function canManageCctvCameras(): bool
+    {
+        try {
+            $user = auth()->user();
+            if (!$user) {
+                return false;
+            }
+
+            return $user->getRoleDetailsByUserId()->get()->contains(function ($role) {
+                return in_array(strtoupper((string) $role->role_name), Config::get('SystemConstant.CAN_CRUDE_CCTV', []));
+            });
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    private function currentCctvUlbId(): ?int
+    {
+        try {
+            $ulbId = app()->bound('CurrentUlbId') ? app('CurrentUlbId') : auth()->user()?->ulb_id;
+            return $ulbId ? (int) $ulbId : null;
+        } catch (Exception $e) {
+            return null;
+        }
+    }
+
+    public function getCctvCameras(Request $request)
+    {
+        try {
+            $ulbId = $this->currentCctvUlbId();
+            if (!$ulbId) {
+                return response()->json(["status" => false, "message" => "ULB context is required", "data" => null], 422);
+            }
+
+            $cameras = CctvCamera::where('ulb_id', $ulbId)
+                ->where('enabled', true)
+                ->orderBy('name')
+                ->get(['id', 'name', 'type', 'stream_url'])
+                ->map(fn ($camera) => [
+                    'id' => $camera->id,
+                    'name' => $camera->name,
+                    'type' => $camera->type,
+                    'stream_url' => $camera->stream_url,
+                ])
+                ->map(fn ($camera) => camelCase($camera)->all())
+                ->values()
+                ->all();
+
+            return responseMsg(true, "CCTV camera list", [
+                'cameras' => $cameras,
+                'canManage' => $this->canManageCctvCameras(),
+            ]);
+        } catch (CustomException $e) {
+            return responseMsg(false, $e->getMessage(), '');
+        } catch (Exception $e) {
+            return responseMsg(false, 'Internal Server Error', '');
+        }
+    }
+
+    public function addCctvCamera(Request $request)
+    {
+        try {
+            return $this->saveCctvCameraRecord($request, false);
+        } catch (CustomException $e) {
+            return responseMsg(false, $e->getMessage(), '');
+        } catch (Exception $e) {
+            return responseMsg(false, 'Internal Server Error', '');
+        }
+    }
+
+    public function editCctvCamera(Request $request)
+    {
+        try {
+            return $this->saveCctvCameraRecord($request, true);
+        } catch (CustomException $e) {
+            return responseMsg(false, $e->getMessage(), '');
+        } catch (Exception $e) {
+            return responseMsg(false, 'Internal Server Error', '');
+        }
+    }
+
+    private function isValidCctvPlaybackUrl(string $url, string $type): bool
+    {
+        try {
+            $parts = parse_url(trim($url));
+            $allowedSchemes = in_array($type, ['webrtc', 'ip', 'rtsp', 'ffmpeg'], true)
+                ? ['http', 'https', 'ws', 'wss']
+                : ['http', 'https'];
+            if (!is_array($parts) || !isset($parts['scheme'], $parts['host']) || !in_array(strtolower($parts['scheme']), $allowedSchemes, true)) {
+                return false;
+            }
+
+            $host = trim($parts['host'], '[]');
+            return filter_var($host, FILTER_VALIDATE_IP) !== false
+                || preg_match('/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/i', $host) === 1;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    private function saveCctvCameraRecord(Request $request, bool $isEdit)
+    {
+        try {
+            if (!$this->canManageCctvCameras()) {
+                return response()->json(["status" => false, "message" => "Administrator access is required", "data" => null], 403);
+            }
+
+            $ulbId = $this->currentCctvUlbId();
+            if (!$ulbId) {
+                return response()->json(["status" => false, "message" => "ULB context is required", "data" => null], 422);
+            }
+
+            $rules = [
+                'name' => 'required|string|max:150',
+                'type' => 'required|in:viewer,hls,video,mjpeg,webrtc,ip,rtsp,ffmpeg',
+                'streamUrl' => 'nullable|string|max:2048',
+                'sourceUrl' => ['nullable', 'string', 'max:2048', 'regex:/^(?:rtsps?:\/\/|ffmpeg:(?:https?|rtsps?):\/\/)/i'],
+            ];
+            if ($isEdit) {
+                $rules['id'] = 'required|integer';
+            }
+
+            $validator = Validator::make($request->all(), $rules);
+            if ($validator->fails()) {
+                return response()->json(["status" => false, "message" => "Validation error", "errors" => $validator->errors(), "data" => null], 422);
+            }
+            if ($request->filled('streamUrl') && !$this->isValidCctvPlaybackUrl((string) $request->streamUrl, (string) $request->type)) {
+                return response()->json(["status" => false, "message" => in_array($request->type, ['webrtc', 'ip', 'rtsp', 'ffmpeg'], true) ? "A valid HTTP(S) or WebSocket playback URL is required" : "A valid http:// or https:// playback URL is required", "data" => null], 422);
+            }
+
+            $camera = $isEdit
+                ? CctvCamera::where('ulb_id', $ulbId)->find($request->id)
+                : new CctvCamera();
+            if ($isEdit && !$camera) {
+                return response()->json(["status" => false, "message" => "Camera not found", "data" => null], 404);
+            }
+            $hasPrivateSource = in_array($request->type, ['ip', 'rtsp', 'ffmpeg'], true);
+            if ($hasPrivateSource && !$request->filled('sourceUrl') && !$camera?->rtsp_url) {
+                return response()->json(["status" => false, "message" => "A camera source URL is required for this camera type", "data" => null], 422);
+            }
+            if (!$hasPrivateSource && !$request->filled('streamUrl')) {
+                return response()->json(["status" => false, "message" => "A browser stream URL is required for this camera type", "data" => null], 422);
+            }
+
+            $camera->ulb_id = $ulbId;
+            $camera->name = $request->name;
+            $camera->type = $request->type;
+            $camera->stream_url = $request->filled('streamUrl') ? $request->streamUrl : null;
+            if ($request->filled('sourceUrl')) {
+                $camera->rtsp_url = $request->sourceUrl;
+            }
+            if (!$hasPrivateSource) {
+                $camera->rtsp_url = null;
+            }
+            $camera->enabled = true;
+            if (!$camera->exists) {
+                $camera->created_by = auth()->id();
+            }
+            $camera->save();
+
+            return responseMsg(true, $isEdit ? "CCTV camera updated" : "CCTV camera added", camelCase($camera->only(['id', 'name', 'type', 'stream_url', 'enabled'])));
+        } catch (CustomException $e) {
+            return responseMsg(false, $e->getMessage(), '');
+        } catch (Exception $e) {
+            return responseMsg(false, 'Internal Server Error', '');
+        }
+    }
+
+    public function deleteCctvCamera(Request $request)
+    {
+        try {
+            if (!$this->canManageCctvCameras()) {
+                return response()->json(["status" => false, "message" => "Administrator access is required", "data" => null], 403);
+            }
+
+            $ulbId = $this->currentCctvUlbId();
+            if (!$ulbId) {
+                return response()->json(["status" => false, "message" => "ULB context is required", "data" => null], 422);
+            }
+
+            $validator = Validator::make($request->all(), ['id' => 'required|integer']);
+            if ($validator->fails()) {
+                return response()->json(["status" => false, "message" => "A valid camera ID is required", "data" => null], 422);
+            }
+
+            $camera = CctvCamera::where('ulb_id', $ulbId)->find($request->id);
+            if (!$camera) {
+                return response()->json(["status" => false, "message" => "Camera not found", "data" => null], 404);
+            }
+
+            $camera->enabled = false;
+            $camera->save();
+            return responseMsg(true, "CCTV camera disabled", null);
+        } catch (CustomException $e) {
+            return responseMsg(false, $e->getMessage(), '');
+        } catch (Exception $e) {
+            return responseMsg(false, 'Internal Server Error', '');
+        }
     }
 
     public function vehicleTypeList(Request $request){

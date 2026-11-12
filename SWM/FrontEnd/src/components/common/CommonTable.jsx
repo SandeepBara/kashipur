@@ -134,20 +134,20 @@ export default function CommonTable({
     }
   };
   return (
-    <div className="bg-white shadow-md p-4 border rounded-xl">
+    <div className="swm-page-card bg-white shadow-md p-3 sm:p-5 border rounded-xl min-w-0">
       {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="font-semibold text-xl">{title}</h2>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4">
+        <h2 className="font-semibold text-lg sm:text-xl text-slate-800">{title}</h2>
         {actionButton}
       </div>
 
       {filterComponent && <div className="mb-4">{filterComponent}</div>}
 
       {/* Search & Export */}
-      <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 mb-3">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            className="flex items-center gap-2 bg-green-500 px-3 py-1 rounded text-white"
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded-lg text-white text-sm font-semibold"
             onClick={exportToExcel}
             disabled={isExcelExporting}
           >
@@ -158,7 +158,7 @@ export default function CommonTable({
           </button>
 
           <button
-            className="flex items-center gap-2 bg-red-500 px-3 py-1 rounded text-white"
+            className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 px-3 py-2 rounded-lg text-white text-sm font-semibold"
             onClick={exportToPDF}
             disabled={isPDFExporting}
           >
@@ -169,19 +169,19 @@ export default function CommonTable({
           </button>
         </div>
 
-        <div className="flex justify-end items-center gap-2 ml-auto w-full md:w-1/3">
+        <div className="flex items-center gap-2 ml-auto w-full lg:w-auto lg:min-w-[min(100%,22rem)]">
           {isSearchInput && (
             <input
               type="text"
               placeholder="Search..."
-              className="px-2 py-1 border rounded w-full"
+              className="px-3 py-2 border rounded-lg w-full min-w-0"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
           )}
           <button
             onClick={handleSearchClick}
-            className="bg-blue-500 px-3 py-1 rounded text-white whitespace-nowrap"
+            className="bg-teal-700 hover:bg-teal-800 px-4 py-2 rounded-lg text-white text-sm font-semibold whitespace-nowrap"
           >
             Search
           </button>
@@ -189,7 +189,7 @@ export default function CommonTable({
       </div>
 
       {/* Items per page */}
-      <div className="flex justify-between items-center mt-4 text-sm">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mt-4 text-sm">
         {isPaginator&&(
           <div className="flex items-center space-x-2">
             <span>Show</span>
@@ -226,7 +226,7 @@ export default function CommonTable({
         </div>
       )}
       {/* Table */}
-      <div className="relative max-h-[500px]  mt-4 border rounded overflow-x-auto overflow-y-auto scrollbar-hide">
+      <div className="relative max-h-[min(65vh,680px)] mt-4 border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto scrollbar-hide">
         <table className="bg-white min-w-full text-sm">
           <thead>
             <tr className="bg-gray-100 text-left">
@@ -263,11 +263,11 @@ export default function CommonTable({
 
       {/* Pagination */}
       {isPaginator&&(
-        <div className="flex justify-between items-center mt-4 text-sm">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mt-4 text-sm">
           <span>
             Page {currentPage} of {totalPages}
           </span>
-          <div className="flex items-center space-x-1">
+          <div className="flex flex-wrap items-center gap-1">
             <button
               onClick={() => handlePageChange(currentPage - 1)}
               disabled={currentPage === 1}

@@ -13,7 +13,7 @@ function InputField({
     <div>
       <label
         htmlFor={name}
-        className="block font-semibold text-gray-700 text-sm"
+        className="block mb-1 font-semibold text-slate-700 text-sm"
       >
         {label} {required &&(<span className="text-red-500">*</span>)}
       </label>
@@ -25,9 +25,9 @@ function InputField({
         onChange={onChange}
         placeholder={label}
         disabled={disabled}
-        className={`w-full mt-1 p-2 border ${
-          error ? "border-red-500" : "border-gray-300"
-        } rounded-md`}
+        className={`w-full p-2.5 border ${
+          error ? "border-red-500" : "border-slate-300"
+        } rounded-lg bg-white focus:ring-2 focus:ring-teal-100 focus:border-teal-600`}
         {...rest}
       />
       {error && <p className="mt-1 text-red-500 text-sm">{error}</p>}

@@ -17,13 +17,9 @@ TC tracks are based on recorded consumer visits. Continuous live TC movement req
 
 ### CCTV
 
-The CCTV UI lives in `src/components/common/CctvMonitor.jsx`, separate from the tracking map. It supports selecting a camera, single view, up to four feeds in a 2×2 grid, refreshing feeds, and fullscreen. Configure each camera's stream type in the Laravel backend environment so URLs are not compiled into the public frontend bundle. Supported types are `viewer` (NVR/WebRTC viewer page), `hls` (`.m3u8`), `video` (MP4/WebM), `mjpeg` (multipart JPEG), and `rtsp` (server-only; must be converted through a gateway). Example:
+The CCTV UI lives in `src/components/common/CctvMonitor.jsx`, separate from the tracking map. It supports selecting a camera, single view, up to four feeds in a 2×2 grid, refreshing feeds, fullscreen, and admin camera management. Camera records are stored in the system PostgreSQL database and scoped by ULB. Supported types are `viewer` (NVR page), `webrtc` (go2rtc WebRTC WebSocket player), `hls` (`.m3u8`), `video` (MP4/WebM), `mjpeg` (multipart JPEG), `ip` (IP camera RTSP source), `rtsp`, and `ffmpeg` (go2rtc/FFmpeg source). IP, RTSP, and FFmpeg sources are stored encrypted and stay on the server; provide a browser gateway URL to view them live. For direct go2rtc WebRTC playback, enter a WebSocket URL such as `ws://gateway:1984/api/ws?src=camera-name`; the frontend loads go2rtc's `video-stream.js` from that gateway. The browser must be able to reach the gateway, and HTTPS deployments need `wss://`. Users whose role name contains “admin” can add, edit, and disable cameras in the panel. Private source URLs never appear in the camera-list API. HLS plays natively only in browsers that support it; use an embeddable NVR player or an HLS.js-enabled gateway for other browsers. Do not put camera passwords in a browser playback URL. NVR pages must allow iframe embedding. “Viewer page loaded” confirms the page loaded, not that video is healthy.
 
-```dotenv
-CCTV_CAMERAS='[{"id":"gate","name":"Main Gate","type":"viewer","view_url":"https://nvr.example.local/view/camera-1"},{"id":"yard","name":"Yard","type":"hls","stream_url":"https://media.example.local/yard/index.m3u8"},{"id":"office","name":"Office","type":"rtsp"}]'
-```
-
-The authenticated camera-list API exposes only configured IDs, names, types, and browser stream URLs. RTSP addresses remain server-side; convert those feeds through an NVR or RTSP-to-HLS/WebRTC gateway. HLS plays natively only in browsers that support it; use an embeddable NVR player or an HLS.js-enabled gateway for other browsers. Do not put camera passwords in a browser URL. NVR pages must allow iframe embedding. “Viewer page loaded” confirms the page loaded, not that video is healthy. Clear cached Laravel config after changing environment values.
+Apply the database migration from `SWM/Backend` with `php artisan migrate --path=database/migrations/2026_11_11_000000_create_cctv_cameras_table.php`. Camera stream addresses are browser-visible for supported playback types; use signed/short-lived URLs or an authenticated NVR viewer when feeds require access control.
 
 ### Map tiles
 

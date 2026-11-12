@@ -224,6 +224,11 @@ Route::middleware(['auth:sanctum',"expireBearerToken","setUlb"])->group(function
         Route::post("assets/driver/lock-unlock","driverLockUnlock");
 
         Route::post("assets/driver-vehicle/map","vehicleDriverMap");
+
+        Route::post("assets/cctv/list", "getCctvCameras");
+        Route::post("assets/cctv/add", "addCctvCamera");
+        Route::post("assets/cctv/edit", "editCctvCamera");
+        Route::post("assets/cctv/delete", "deleteCctvCamera");
     });
 
     Route::controller(QueryEditedController::class)->group(function(){

@@ -54,25 +54,25 @@ const AdminSidebar = ({
     <aside
       ref={sidebarRef}
       className={`
-        fixed top-20 left-0 
-        h-[calc(100vh-80px)]        /* full height below header */
-        overflow-y-scroll scrollbar-hide
-        bg-gray-900 text-white z-30
+        fixed top-[72px] left-0
+        h-[calc(100dvh-72px)]
+        overflow-y-auto scrollbar-hide
+        bg-slate-950 text-white z-30
         transition-transform duration-300 ease-in-out
-        ${isSidebarOpen ? "translate-x-0 w-96" : "-translate-x-full w-96"}
+        ${isSidebarOpen ? "translate-x-0 w-[min(20rem,calc(100vw-2rem))]" : "-translate-x-full w-[min(20rem,calc(100vw-2rem))]"}
         md:static md:translate-x-0
-        ${isCollapsed ? "md:w-16" : "md:w-64"}
+        ${isCollapsed ? "md:w-[4.5rem]" : "md:w-64"}
       `}
     >
       {/* Sidebar Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-700">
+      <div className="flex items-center justify-between min-h-14 p-4 border-b border-slate-800">
         {!isCollapsed && (
           <span className="text-lg font-semibold tracking-wide"></span>
         )}
 
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="hidden md:block text-gray-400 hover:text-white"
+          className="hidden md:block text-slate-400 hover:text-white"
         >
           {isCollapsed ? (
             <FaIcons.FaChevronRight />
